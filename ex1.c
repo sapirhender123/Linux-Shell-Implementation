@@ -3,6 +3,7 @@
 #include <string.h>
 #define BUF_SIZE (8192)
 #define PATH_MAX (1024)
+#define ARGS_COUNT (64)
 #define PROMPT "$ "
 #include <unistd.h>
 #include <wait.h>
@@ -18,7 +19,9 @@ void cd (const char *path){
         char* last = strrchr(bufferCwd, '/');  // This cannot return NULL, always have / in path
         if (last != bufferCwd) { // not equal to start
             *last = '\0'; // cut string until last /
-            chdir(bufferCwd);
+            if (chdir(bufferCwd) == -1) {
+                printf("%s \n", "chdir failed");
+            }
         } else {
             // *(last + 1) = '\0';
             chdir("/");
@@ -49,18 +52,24 @@ void cd (const char *path){
 
 int main() {
     // while loop that scan input from the user.
-    char buffer[BUF_SIZE];
+    char buffer[BUF_SIZE] = {0};
     char prev_path[PATH_MAX];
+    char *args[ARGS_COUNT];
     while (true) {
         {
             char bufferCwd[BUF_SIZE];
             getcwd(bufferCwd, BUF_SIZE);
-            fputs(bufferCwd, stdout);
+            printf("%s", bufferCwd);
+            fflush(stdout);
         }
+        printf("%s", PROMPT);
+        fflush(stdout);
 
-        fputs(PROMPT, stdout);
         unsigned int c;
         int idx = 0;
+        int args_start_idx = 0;
+
+        // read command
         do {
             if (idx >= BUF_SIZE) {
                 // todo:
@@ -68,8 +77,24 @@ int main() {
             }
             c = fgetc(stdin);
             buffer[idx++] = (char)c;
+
+            if (0 == args_start_idx && c == ' ') {
+                args_start_idx = idx;
+            }
         } while (c != '\n');
+
+        if (0 != args_start_idx) {
+            buffer[args_start_idx - 1] = '\0';
+        }
+
         buffer[--idx] = '\0';
+
+        // create args array
+        int args_idx = 0;
+        args[args_idx++] = strtok(buffer + args_start_idx, " ");
+        while (NULL != args[args_idx - 1]) {
+            args[args_idx++] = strtok(NULL, " ");
+        }
 
         if (0 == strncmp(buffer, "exit", 4)) {
             return 0;
@@ -97,7 +122,34 @@ int main() {
             }
         }
 
+        if ((buffer[idx - 1]) == '&') {
+            // father don't wait - fork  + exec
+            fork();
+            buffer[idx - 2]= '\0';
+            const char delim[2] = "-";
+            char *token = strtok(buffer, delim);
+            // move to array
+//            execv(token);
+        }
+        else {
+            pid_t pid = fork();
+            if (-1 == pid) {
+                // todo
+            }
 
+            // father wait
+            // fork + exec + waitpid
+            if (0 == pid) {
+                // in son
+                execvp(buffer, args);
+            } else {
+                // in parent
+                int wstatus;
+                waitpid(pid, &wstatus, 0);
+                // todo: check wstatus
+            }
+        }
+    }
 //        // else - not a builtin
 //        // fork - exec - ...
 //        pid_t pid = fork();
@@ -110,5 +162,4 @@ int main() {
 //            waitpid
 //            // else - background - linked list
 //        }
-    }
 }
