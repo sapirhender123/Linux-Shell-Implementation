@@ -1,8 +1,8 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <string.h>
-#define BUF_SIZE (8192)
-#define PATH_MAX (1024)
+#define BUF_SIZE (100)
+#define PATH_MAX (100)
 #define ARGS_COUNT (64)
 #define PROMPT "$ "
 #include <unistd.h>
@@ -50,18 +50,29 @@ void cd (const char *path){
     chdir(path);
 }
 
+typedef struct process {
+    pid_t pid;
+    char command[BUF_SIZE];
+} process_t;
+
 int main() {
     // while loop that scan input from the user.
-    char buffer[BUF_SIZE] = {0};
+    int cmd_indx = 0;
     char prev_path[PATH_MAX];
-    char *args[ARGS_COUNT];
+    process_t history[BUF_SIZE] = {0};
+
     while (true) {
-        {
-            char bufferCwd[BUF_SIZE];
-            getcwd(bufferCwd, BUF_SIZE);
-            printf("%s", bufferCwd);
-            fflush(stdout);
-        }
+        char buffer[BUF_SIZE] = {0};
+        char *args[ARGS_COUNT] = {0};
+
+//        {
+//            char bufferCwd[BUF_SIZE];
+//            getcwd(bufferCwd, BUF_SIZE);
+//            //todo: delete in the end
+//            printf("%s", bufferCwd);
+//            fflush(stdout);
+//        }
+
         printf("%s", PROMPT);
         fflush(stdout);
 
@@ -72,30 +83,44 @@ int main() {
         // read command
         do {
             if (idx >= BUF_SIZE) {
-                // todo:
-                // handle error
+                printf("An error occurred");
+                fflush(stdout);
             }
+            // input from the user
             c = fgetc(stdin);
-            buffer[idx++] = (char)c;
-
+            history[cmd_indx].command[idx++] = (char) c;
+            // parse args
             if (0 == args_start_idx && c == ' ') {
                 args_start_idx = idx;
             }
         } while (c != '\n');
 
+        history[cmd_indx].command[--idx] = '\0';
+        memcpy(buffer, history[cmd_indx].command, BUF_SIZE);
+
         if (0 != args_start_idx) {
             buffer[args_start_idx - 1] = '\0';
         }
 
-        buffer[--idx] = '\0';
-
-        // create args array
-        int args_idx = 0;
-        args[args_idx++] = strtok(buffer + args_start_idx, " ");
-        while (NULL != args[args_idx - 1]) {
-            args[args_idx++] = strtok(NULL, " ");
+        // check if background
+        bool is_background = false;
+        if (buffer[--idx] == '&') {
+            is_background = true;
+            buffer[--idx] = '\0';
+            history[cmd_indx].command[idx] = '\0';
         }
 
+        // create args array
+        int args_idx = 1;
+        args[0] = buffer; // convention (man exec)
+        if (args_start_idx != 0) {
+            args[args_idx++] = strtok(buffer + args_start_idx, " ");
+            while (NULL != args[args_idx - 1]) {
+                args[args_idx++] = strtok(NULL, " ");
+            }
+        }
+
+        // handle builtin commands
         if (0 == strncmp(buffer, "exit", 4)) {
             return 0;
         }
@@ -106,10 +131,18 @@ int main() {
 
         if (strncmp(buffer, "history", 7) == 0) {
             // pass all over the linked list and print
+            for (int i = 0; i < cmd_indx + 1; i++) {
+                printf("%s", history[i].command);
+                int wstatus;
+                if (waitpid(history[i].pid, &wstatus, WNOHANG) != 0) {
+                    printf(" DONE\n");
+                } else {
+                    printf(" RUNNING\n");
+                }
+                fflush(stdout);
+            }
+            continue;
         }
-
-        // check all builtins
-        // if cd  -> call cd
 
         if (strncmp(buffer, "cd", 2) == 0) {
             // cd ..
@@ -120,46 +153,36 @@ int main() {
             } else {
                 cd(prev_path);
             }
+            continue;
         }
 
-        if ((buffer[idx - 1]) == '&') {
-            // father don't wait - fork  + exec
-            fork();
-            buffer[idx - 2]= '\0';
-            const char delim[2] = "-";
-            char *token = strtok(buffer, delim);
-            // move to array
-//            execv(token);
+        // handle the other commands
+        pid_t pid = fork();
+        if (pid == -1) {
+            printf("%s", "fork failed");
+            fflush(stdout);
+            continue;
         }
-        else {
-            pid_t pid = fork();
-            if (-1 == pid) {
-                // todo
-            }
 
-            // father wait
-            // fork + exec + waitpid
-            if (0 == pid) {
-                // in son
-                execvp(buffer, args);
+        if (pid == 0) {
+            // in son
+            execvp(buffer, args);
+        } else {
+            // in parent
+            history[cmd_indx].pid = pid;
+            if (is_background) {
+                // Background - father don't wait - fork  + exec
+                // add to list
             } else {
-                // in parent
+                // Foreground - *father wait*
+                // fork + exec + waitpid
                 int wstatus;
                 waitpid(pid, &wstatus, 0);
-                // todo: check wstatus
+                // in the wstatus there is a value, it is irrelevant in the exercise
+                //man no hang
             }
         }
+
+        cmd_indx++;
     }
-//        // else - not a builtin
-//        // fork - exec - ...
-//        pid_t pid = fork();
-//        if (0 == pid) {
-//            // in child
-//            execv()
-//        } else {
-//            // in parent
-//            // if foreground - wait for child
-//            waitpid
-//            // else - background - linked list
-//        }
 }
