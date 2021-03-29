@@ -117,7 +117,7 @@ int main() {
 
         // check if background
         if (buffer[--idx] == '&') {
-            buffer[idx] = '\0';
+            buffer[idx - 1] = '\0';
             history[cmd_indx].command[idx] = '\0';
             history[cmd_indx].is_background = true;
         }
@@ -135,14 +135,23 @@ int main() {
 
         // handle builtin commands
         if (strcmp(args[0], "exit") == 0) {
+            for (int i = 0; i < cmd_indx; i++) {
+                if (history[i].is_background) {
+                    int wstatus;
+                    if (waitpid(history[i].pid, &wstatus, 0) == -1) {
+                        printf(ERR_MSG);
+                        fflush(stdout);
+                }
+            }
             return 0;
         }
 
         if (strcmp(args[0], "jobs") == 0) {
+            history[cmd_indx].pid = -1;
             if (args_idx > 1) {
                 printf(ERR_MSG);
                 fflush(stdout);
-                continue;
+                goto cont;
             }
 
             // pass all over the linked list and print
@@ -153,15 +162,16 @@ int main() {
                     fflush(stdout);
                 }
             }
-            history[cmd_indx].pid = -1;
+
             goto cont;
         }
 
         if (strcmp(args[0], "history") == 0) {
+            history[cmd_indx].pid = -1;
             if (args_idx > 1) {
                 printf(ERR_MSG);
                 fflush(stdout);
-                continue;
+                goto cont;
             }
 
             // pass all over the linked list and print
@@ -169,8 +179,8 @@ int main() {
                 printf("%s", history[i].command);
                 fflush(stdout);
                 int wstatus;
-                if ((history[i].pid != 0 && waitpid(history[i].pid, &wstatus, WNOHANG) != 0)
-                    || -1 == history[cmd_indx].pid) {
+                if (-1 == history[i].pid ||
+                    (history[i].pid != 0 && waitpid(history[i].pid, &wstatus, WNOHANG) != 0)) {
                     printf(" DONE\n");
                 } else {
                     printf(" RUNNING\n");
@@ -178,7 +188,6 @@ int main() {
                 fflush(stdout);
             }
 
-            history[cmd_indx].pid = -1;
             goto cont;
         }
 
@@ -213,7 +222,7 @@ int main() {
         if (pid == -1) {
             printf("%s", "fork failed");
             fflush(stdout);
-            continue;
+            goto cont;
         }
 
         if (pid == 0) {
@@ -229,7 +238,10 @@ int main() {
             if (!history[cmd_indx].is_background) {
                 // Foreground - *father wait*
                 int wstatus;
-                waitpid(pid, &wstatus, 0);
+                if (waitpid(pid, &wstatus, 0) == -1){
+                    printf(ERR_MSG);
+                    fflush(stdout);
+                };
                 // in the wstatus there is a value, it is irrelevant in the exercise
             }
         }
