@@ -1,3 +1,4 @@
+// Sapir Hender 208414573
 #include <stdio.h>
 #include <stdbool.h>
 #include <string.h>
@@ -9,13 +10,31 @@
 #include <unistd.h>
 #include <wait.h>
 #include <pwd.h>
+#include <stdlib.h>
+
+void format_home_dir(char wanted_dir[], const char *path)
+{
+    uid_t uid = getuid();
+    struct passwd* pwd = getpwuid(uid);
+    memcpy(wanted_dir, pwd->pw_dir, strlen(pwd->pw_dir)); // /home/<user>
+    wanted_dir[strlen(pwd->pw_dir)] = '/';
+    if (path != NULL && strlen(path) > 2) {
+        memcpy(wanted_dir + strlen(pwd->pw_dir) + 1, path + 2, strlen(path + 2)); // /home/<user>/<path>
+    }
+}
 
 void cd (const char *path){
     // "cd ~" or "cd"
-    if (path == NULL || strncmp(path, "~", 1) == 0) {
-        uid_t uid = getuid();
-        struct passwd* pwd = getpwuid(uid);
-        chdir(pwd->pw_dir);
+    // Home
+    if (path == NULL || strcmp(path, "~") == 0 || strncmp(path, "~/", 2) == 0) {
+        char wanted_dir[100] = {0};
+        format_home_dir(wanted_dir, path);
+
+        if (-1 == chdir(wanted_dir)) {
+            printf("chdir failed\n");
+            fflush(stdout);
+        }
+
         return;
     }
 
@@ -33,13 +52,15 @@ void cd (const char *path){
             }
         } else {
             // *(last + 1) = '\0';
-            chdir("/");
-            // todo: if fail
+            if (chdir("/") == -1) {
+                printf("%s\n", "chdir failed");
+                fflush(stdout);
+            }
             return;
         }
 
         char *first = strchr(path, '/');
-        if (NULL == first) {
+        if (NULL == first || 0 == strcmp(first, "/")) {
             return;
         }
 
@@ -49,11 +70,15 @@ void cd (const char *path){
     }
 
     // cd
-    chdir(path);
+    if (-1 == chdir(path)) {
+        printf("chdir failed\n");
+        fflush(stdout);
+    }
 }
 
 void parse_string_echo(char *string) {
-    for (int i = 0; i < strlen(string); ++i) {
+    int i = 0;
+    for (; i < strlen(string); ++i) {
         if (string[i] == '"') {
             memmove(string + i, string + i + 1, strlen(string + i + 1));
             (string + i)[strlen(string + i + 1)] = '\0';
@@ -71,7 +96,9 @@ typedef struct process {
 int main() {
     // while loop that scan input from the user.
     int cmd_indx = 0;
-    char prev_path[PATH_MAX];
+    char prev_path[PATH_MAX] = {0};
+    getcwd(prev_path, PATH_MAX);
+
     process_t history[BUF_SIZE] = {0};
 
     while (true) {
@@ -117,8 +144,9 @@ int main() {
 
         // check if background
         if (buffer[--idx] == '&') {
-            buffer[idx - 1] = '\0';
+            buffer[idx] = '\0';
             history[cmd_indx].command[idx] = '\0';
+            history[cmd_indx].command[idx - 1] = '\0';
             history[cmd_indx].is_background = true;
         }
 
@@ -135,15 +163,7 @@ int main() {
 
         // handle builtin commands
         if (strcmp(args[0], "exit") == 0) {
-            for (int i = 0; i < cmd_indx; i++) {
-                if (history[i].is_background) {
-                    int wstatus;
-                    if (waitpid(history[i].pid, &wstatus, 0) == -1) {
-                        printf(ERR_MSG);
-                        fflush(stdout);
-                }
-            }
-            return 0;
+            exit(0);
         }
 
         if (strcmp(args[0], "jobs") == 0) {
@@ -155,7 +175,8 @@ int main() {
             }
 
             // pass all over the linked list and print
-            for (int i = 0; i < cmd_indx + 1; i++) {
+            int i = 0;
+            for (; i < cmd_indx + 1; i++) {
                 int wstatus;
                 if (history[i].is_background == true && 0 == waitpid(history[i].pid, &wstatus, WNOHANG)) {
                     printf("%s\n", history[i].command);
@@ -167,7 +188,9 @@ int main() {
         }
 
         if (strcmp(args[0], "history") == 0) {
-            history[cmd_indx].pid = -1;
+            // todo:check
+
+            // the history have no args
             if (args_idx > 1) {
                 printf(ERR_MSG);
                 fflush(stdout);
@@ -175,10 +198,17 @@ int main() {
             }
 
             // pass all over the linked list and print
-            for (int i = 0; i < cmd_indx + 1; i++) {
+            int i = 0;
+            for (; i < cmd_indx + 1; i++) {
                 printf("%s", history[i].command);
                 fflush(stdout);
                 int wstatus;
+
+                /* It should be in the DONE commands when it is one of the following reasons:
+                 * 1. if there was a command with error
+                 * 2. if there are no children for the process
+                 * 3. if the command is a built-in command
+                 */
                 if (-1 == history[i].pid ||
                     (history[i].pid != 0 && waitpid(history[i].pid, &wstatus, WNOHANG) != 0)) {
                     printf(" DONE\n");
@@ -188,6 +218,7 @@ int main() {
                 fflush(stdout);
             }
 
+            history[cmd_indx].pid = -1;
             goto cont;
         }
 
@@ -199,13 +230,16 @@ int main() {
                 goto cont;
             }
 
-            // cd ..
             // prev_path <- getcwd
             if (args[1] != NULL && strcmp(args[1], "-") == 0) {
-                cd(prev_path);
-            } else {
+                char tmp[100];
+                strcpy(tmp, prev_path);
                 getcwd(prev_path, PATH_MAX);
-                cd(args[1]); // path starts at 3, after "cd "
+                cd(tmp);
+            } else {
+                // path is NULL or path != "-"
+                getcwd(prev_path, PATH_MAX);
+                cd(args[1]); // arg[1] is the path
             }
 
             goto cont;
@@ -213,20 +247,25 @@ int main() {
 
         if (strcmp(args[0], "echo") == 0) {
             parse_string_echo(args[1]);
-            //char *ptr = strtok(args[1], '"');
-            //printf(ptr);
         }
 
         // handle the other commands
         pid_t pid = fork();
         if (pid == -1) {
-            printf("%s", "fork failed");
+            printf("%s", "fork failed\n");
             fflush(stdout);
             goto cont;
         }
 
         if (pid == 0) {
             // in son
+            // handle if the first argument starts with ~/, format home directory instead
+            if (args[1] != NULL && strncmp(args[1], "~/", 2) == 0) {
+                char wanted_dir[100] = {0};
+                format_home_dir(wanted_dir, args[1]);
+                args[1] = wanted_dir;
+            }
+
             if (-1 == execvp(buffer, args)) {
                 printf("exec failed\n");
                 fflush(stdout);
@@ -248,6 +287,5 @@ int main() {
         cont:
         cmd_indx++;
     }
-
     return 0;
 }
