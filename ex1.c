@@ -1,4 +1,4 @@
-// Sapir Hender 208414573
+
 #include <stdio.h>
 #include <stdbool.h>
 #include <string.h>
